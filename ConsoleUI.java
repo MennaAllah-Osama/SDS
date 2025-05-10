@@ -1,15 +1,22 @@
-
 import Authentication.AuthService;
 import Authentication.User;
 import BudgetManagement.Reminder;
 import BudgetManagement.ReminderStorageService;
 import BudgetManagement.Expense;
 import BudgetManagement.ExpenseStorageService;
+import BudgetManagement.Income;
+import BudgetManagement.IncomeStorageService;
+import BudgetManagement.Budget;
+import BudgetManagement.BudgetStorageService;
+
+
 import java.io.IOException;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Scanner;
 import java.util.stream.Collectors;
+import java.util.HashMap;
+import java.util.Map;
 
 public class ConsoleUI {
     private AuthService authService;
@@ -124,6 +131,8 @@ public class ConsoleUI {
         }
 
 
+//        System.out.println("Welcome, " + currentUser.getUsername() + "!");
+
         while (true) {
             System.out.println("\n--- Dashboard Menu ---");
             System.out.println("1. View Profile");
@@ -131,7 +140,12 @@ public class ConsoleUI {
             System.out.println("3. Show My Reminders");
             System.out.println("4. Add Expense");
             System.out.println("5. Show My Expenses");
-            System.out.println("6. Logout");
+            System.out.println("6. Add Income");
+            System.out.println("7. Show My Incomes");
+            System.out.println("8. Set Budget for Category");
+            System.out.println("9. Analyze Spending");
+
+            System.out.println("10. Logout");
             System.out.print("Choose an option: ");
 
             int choice = scanner.nextInt();
@@ -156,8 +170,13 @@ public class ConsoleUI {
                 case 5:
                     showMyExpenses(currentUser);
                     break;
-
                 case 6:
+                    addIncome(currentUser); break;
+                case 7: showMyIncomes(currentUser); break;
+                case 8: setBudget(currentUser); break;
+                case 9: analyzeSpending(currentUser); break;
+
+                case 10:
                     System.out.println("Logging out...");
                     return;
                 default:
@@ -165,6 +184,115 @@ public class ConsoleUI {
             }
         }
     }
+    private void addIncome(User user) {
+        System.out.print("Enter income source (e.g., salary): ");
+        String source = scanner.nextLine();
+        if (source.length() < 3 || source.length() > 50) {
+            System.out.println("Invalid source length.");
+            return;
+        }
+
+        System.out.print("Enter amount: ");
+        double amount = scanner.nextDouble();
+        scanner.nextLine(); // consume newline
+        if (amount <= 0) {
+            System.out.println("Amount must be positive.");
+            return;
+        }
+
+        System.out.print("Enter date (YYYY-MM-DD): ");
+        LocalDate date = LocalDate.parse(scanner.nextLine());
+        if (date.isAfter(LocalDate.now())) {
+            System.out.println("Date cannot be in the future.");
+            return;
+        }
+
+        System.out.print("Is this recurring? (true/false): ");
+        boolean isRecurring = Boolean.parseBoolean(scanner.nextLine());
+
+        Income income = new Income(source, amount, date, isRecurring, user.getUserId());
+        IncomeStorageService storage = new IncomeStorageService();
+        storage.saveIncome(income);
+        System.out.println("Income saved.");
+    }
+
+    private void showMyIncomes(User user) {
+        IncomeStorageService storage = new IncomeStorageService();
+        List<Income> incomes = storage.loadIncomes();
+        System.out.println("=== My Incomes ===");
+        incomes.stream()
+                .filter(i -> i.getUserId().equals(user.getUserId()))
+                .forEach(System.out::println);
+    }
+    private void setBudget(User user) {
+        System.out.print("Enter category (e.g., groceries, rent): ");
+        String category = scanner.nextLine().trim();
+
+         if (!category.matches("^[a-zA-Z0-9 ]{3,50}$")) {
+            System.out.println("Invalid category. Must be 3-50 characters and contain only letters, numbers, and spaces.");
+            return;
+        }
+
+         List<String> validCategories = List.of("groceries", "rent", "entertainment", "transportation", "bills");
+        if (validCategories.stream().noneMatch(v -> v.equalsIgnoreCase(category))) {
+            System.out.println("Invalid category. Choose from: " + String.join(", ", validCategories));
+            return;
+        }
+
+        System.out.print("Enter budget amount: ");
+        double amount;
+        try {
+            amount = Double.parseDouble(scanner.nextLine());
+            if (amount <= 0) {
+                System.out.println("Amount must be a positive number.");
+                return;
+            }
+        } catch (NumberFormatException e) {
+            System.out.println("Invalid amount format. Please enter a number like 500.00");
+            return;
+        }
+
+        BudgetStorageService storage = new BudgetStorageService();
+        Budget budget = storage.getBudgetByUserId(user.getUserId());
+        budget.setLimit(category.toLowerCase(), amount);
+        storage.saveBudget(budget);
+
+        System.out.println("✅ Budget saved for category: " + category);
+    }
+
+
+    private void analyzeSpending(User user) {
+        ExpenseStorageService expenseStorage = new ExpenseStorageService();
+        List<Expense> expenses = expenseStorage.loadExpenses();
+
+        Map<String, Double> spendingPerCategory = new HashMap<>();
+
+        for (Expense expense : expenses) {
+            if (expense.getUserId().equals(user.getUserId())) {
+                String category = expense.getCategory().toLowerCase();
+                spendingPerCategory.put(category,
+                        spendingPerCategory.getOrDefault(category, 0.0) + expense.getAmount());
+            }
+        }
+
+         if (spendingPerCategory.isEmpty()) {
+            System.out.println("No expenses found to analyze.");
+            return;
+        }
+
+        System.out.println("\n=== Spending Summary ===");
+        for (Map.Entry<String, Double> entry : spendingPerCategory.entrySet()) {
+            System.out.printf("You have spent %.2f on %s this month.\n", entry.getValue(), entry.getKey());
+        }
+
+         BudgetStorageService budgetStorage = new BudgetStorageService();
+        Budget budget = budgetStorage.getBudgetByUserId(user.getUserId());
+
+        System.out.println("\n=== Budget Recommendations ===");
+        String recommendations = budget.getRecommendations(spendingPerCategory);
+        System.out.println(recommendations);
+    }
+
 
     private void addReminder(User user) {
         System.out.print("Enter reminder title: ");
@@ -217,42 +345,27 @@ public class ConsoleUI {
         System.out.print("Enter expense date (YYYY-MM-DD): ");
         LocalDate date = LocalDate.parse(scanner.nextLine());
 
-        System.out.print("Is this a recurring expense? (yes/no): ");
-        String input = scanner.nextLine().trim().toLowerCase();
-        boolean isRecurring = input.startsWith("y");
-
-        Expense expense = new Expense(category, amount, date, isRecurring, user.getUserId());
+        Expense expense = new Expense(amount, category, date, user.getUserId());
 
         ExpenseStorageService storage = new ExpenseStorageService();
-        List<Expense> expenses = storage.loadExpenses();
-        expenses.add(expense);
-        storage.saveExpenses(expenses);
+        List<Expense> allExpenses = storage.loadExpenses();
+        allExpenses.add(expense);
+        storage.saveExpenses(allExpenses);
 
-        System.out.println(" Expense added successfully!");
+        System.out.println("Expense added successfully!");
     }
-
-
 
     private void showMyExpenses(User user) {
         ExpenseStorageService storage = new ExpenseStorageService();
-        List<Expense> allExpenses = storage.loadExpenses();
+        List<Expense> expenses = storage.loadExpenses();
 
-        List<Expense> userExpenses = allExpenses.stream()
-                .filter(e -> e.getUserId().equals(user.getUserId()))
-                .toList();
-
-        if (userExpenses.isEmpty()) {
-            System.out.println("no recorded expenses.");
-        }
-        else {
-            System.out.println("\n=== Your Expenses ===");
-            for (Expense expense : userExpenses) {
-                String type = expense.isRecurring() ? "<Recurring>" : "<One-Time>";
-                System.out.println(">> " + expense + " " + type);
+        System.out.println("\n=== Your Expenses ===");
+        for (Expense e : expenses) {
+            if (e.getUserId().equals(user.getUserId())) {
+                System.out.println(e);
             }
         }
     }
 
 
 }
-
